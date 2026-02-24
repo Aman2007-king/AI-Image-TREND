@@ -1,0 +1,5 @@
+{
+  "name": "Lumina Studio",
+  "description": "A professional AI creative suite for image editing and cinematic video generation powered by Gemini and Veo.",
+  "requestFramePermissions": ["microphone"]
+}
