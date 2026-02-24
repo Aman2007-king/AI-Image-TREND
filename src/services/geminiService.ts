@@ -2,10 +2,11 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 
 export interface GenerationResult {
   id?: number;
-  type: 'image' | 'video' | 'analysis' | 'audio' | 'transcription';
+  type: 'image' | 'video' | 'analysis' | 'audio' | 'transcription' | 'research' | 'summary';
   url: string;
   prompt: string;
   text?: string;
+  sources?: { title: string; uri: string }[];
 }
 
 export const checkVeoKey = async (): Promise<boolean> => {
@@ -16,6 +17,72 @@ export const checkVeoKey = async (): Promise<boolean> => {
 export const openVeoKeyDialog = async (): Promise<void> => {
   if (typeof window.aistudio !== 'undefined') {
     await window.aistudio.openSelectKey();
+  }
+};
+
+export const generateImage = async (prompt: string): Promise<string | null> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: [{ text: prompt }],
+      config: {
+        imageConfig: { aspectRatio: "1:1" }
+      }
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error("Error generating image:", error);
+    throw error;
+  }
+};
+
+export const researchWithSearch = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
+      title: chunk.web?.title || "Source",
+      uri: chunk.web?.uri
+    })).filter((s: any) => s.uri) || [];
+
+    return {
+      text: response.text || "No research results.",
+      sources
+    };
+  } catch (error) {
+    console.error("Error in research:", error);
+    throw error;
+  }
+};
+
+export const summarizeUrl = async (url: string, prompt?: string): Promise<string | null> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: `${prompt || "Summarize the content of this URL:"} ${url}`,
+      config: {
+        tools: [{ urlContext: {} }]
+      },
+    });
+    return response.text || "Failed to summarize URL.";
+  } catch (error) {
+    console.error("Error summarizing URL:", error);
+    throw error;
   }
 };
 

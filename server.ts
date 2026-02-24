@@ -18,6 +18,7 @@ db.exec(`
     data TEXT NOT NULL,
     prompt TEXT NOT NULL,
     text TEXT,
+    sources TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
@@ -39,14 +40,15 @@ async function startServer() {
   });
 
   app.post("/api/history", (req, res) => {
-    const { type, data, prompt, text } = req.body;
+    const { type, data, prompt, text, sources } = req.body;
     if (!type || !data || !prompt) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
     try {
-      const info = db.prepare("INSERT INTO history (type, data, prompt, text) VALUES (?, ?, ?, ?)").run(type, data, prompt, text);
-      res.json({ id: info.lastInsertRowid, type, data, prompt, text });
+      const sourcesStr = sources ? JSON.stringify(sources) : null;
+      const info = db.prepare("INSERT INTO history (type, data, prompt, text, sources) VALUES (?, ?, ?, ?, ?)").run(type, data, prompt, text, sourcesStr);
+      res.json({ id: info.lastInsertRowid, type, data, prompt, text, sources });
     } catch (error) {
       res.status(500).json({ error: "Failed to save history" });
     }

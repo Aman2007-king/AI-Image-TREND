@@ -23,7 +23,15 @@ import {
   Mic,
   Volume2,
   FileText,
-  StopCircle
+  StopCircle,
+  Globe,
+  Link as LinkIcon,
+  ExternalLink,
+  Wand2,
+  BookOpen,
+  FileSearch,
+  Copy,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -36,6 +44,9 @@ import {
   analyzeImage,
   generateSpeech,
   transcribeAudio,
+  generateImage,
+  researchWithSearch,
+  summarizeUrl,
   GenerationResult 
 } from './services/geminiService';
 
@@ -43,7 +54,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type Mode = 'image-edit' | 'video-gen' | 'analyze' | 'speech' | 'transcribe';
+type Mode = 'image-edit' | 'video-gen' | 'analyze' | 'speech' | 'transcribe' | 'generate-image' | 'research' | 'summarize';
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('image-edit');
@@ -120,7 +131,8 @@ export default function App() {
           type: item.type,
           url: item.data,
           prompt: item.prompt,
-          text: item.text
+          text: item.text,
+          sources: item.sources ? JSON.parse(item.sources) : undefined
         })));
       }
     } catch (err) {
@@ -139,6 +151,24 @@ export default function App() {
     }
   };
 
+  const clearHistory = async () => {
+    if (!confirm("Are you sure you want to clear all history?")) return;
+    try {
+      // Assuming we might want a bulk delete or just loop
+      for (const item of results) {
+        if (item.id) await fetch(`/api/history/${item.id}`, { method: 'DELETE' });
+      }
+      setResults([]);
+    } catch (err) {
+      console.error("Failed to clear history:", err);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    // Could add a toast here
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -152,8 +182,8 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    if (!prompt && (mode === 'video-gen' || mode === 'speech')) {
-      setError(`Please enter a prompt for ${mode === 'speech' ? 'speech' : 'video'} generation.`);
+    if (!prompt && (mode === 'video-gen' || mode === 'speech' || mode === 'generate-image' || mode === 'research' || mode === 'summarize')) {
+      setError(`Please enter a prompt or URL for ${mode} generation.`);
       return;
     }
     if (!uploadedImage && (mode === 'image-edit' || mode === 'analyze')) {
@@ -178,6 +208,7 @@ export default function App() {
     try {
       let resultUrl: string | null = null;
       let resultText: string | undefined = undefined;
+      let resultSources: any[] | undefined = undefined;
       let resultType: GenerationResult['type'] = 'image';
 
       if (mode === 'image-edit' && uploadedImage) {
@@ -197,12 +228,25 @@ export default function App() {
         resultText = await transcribeAudio(recordedAudio.data, recordedAudio.mimeType);
         resultUrl = `data:${recordedAudio.mimeType};base64,${recordedAudio.data}`;
         resultType = 'transcription';
+      } else if (mode === 'generate-image') {
+        resultUrl = await generateImage(prompt);
+        resultType = 'image';
+      } else if (mode === 'research') {
+        const research = await researchWithSearch(prompt);
+        resultText = research.text;
+        resultSources = research.sources;
+        resultType = 'research';
+        resultUrl = ''; // No primary asset for research
+      } else if (mode === 'summarize') {
+        resultText = await summarizeUrl(prompt);
+        resultType = 'summary';
+        resultUrl = ''; // No primary asset for summary
       }
 
-      if (resultUrl || resultText) {
+      if (resultUrl !== null || resultText) {
         // For videos and audio, we need to convert the blob URL to base64 for persistence
         let persistentData = resultUrl || '';
-        if (mode === 'video-gen' && resultUrl) {
+        if (mode === 'video-gen' && resultUrl && resultUrl.startsWith('blob:')) {
           const blob = await fetch(resultUrl).then(r => r.blob());
           persistentData = await new Promise((resolve) => {
             const reader = new FileReader();
@@ -218,7 +262,8 @@ export default function App() {
             type: resultType,
             data: persistentData,
             prompt: prompt || (mode === 'image-edit' ? "Image Edit" : mode === 'analyze' ? "Image Analysis" : "Generation"),
-            text: resultText
+            text: resultText,
+            sources: resultSources
           })
         });
 
@@ -229,7 +274,8 @@ export default function App() {
             type: savedItem.type,
             url: savedItem.data,
             prompt: savedItem.prompt,
-            text: savedItem.text
+            text: savedItem.text,
+            sources: savedItem.sources
           };
           setResults([newResult, ...results]);
           setPrompt('');
@@ -269,8 +315,11 @@ export default function App() {
           <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10 backdrop-blur-md overflow-x-auto max-w-full no-scrollbar">
             {[
               { id: 'image-edit', label: 'Edit', icon: ImageIcon },
+              { id: 'generate-image', label: 'Create', icon: Wand2 },
               { id: 'video-gen', label: 'Video', icon: Video },
               { id: 'analyze', label: 'Analyze', icon: Search },
+              { id: 'research', label: 'Research', icon: Globe },
+              { id: 'summarize', label: 'Summary', icon: BookOpen },
               { id: 'speech', label: 'Speech', icon: Volume2 },
               { id: 'transcribe', label: 'Transcribe', icon: Mic },
             ].map((tab) => (
@@ -300,15 +349,21 @@ export default function App() {
                 className="text-5xl font-light tracking-tight"
               >
                 {mode === 'image-edit' && 'Refine your vision.'}
+                {mode === 'generate-image' && 'Create from scratch.'}
                 {mode === 'video-gen' && 'Bring it to life.'}
                 {mode === 'analyze' && 'Understand deeply.'}
+                {mode === 'research' && 'Explore the web.'}
+                {mode === 'summarize' && 'Distill the noise.'}
                 {mode === 'speech' && 'Give it a voice.'}
                 {mode === 'transcribe' && 'Listen and write.'}
               </motion.h2>
               <p className="text-white/40 text-lg">
                 {mode === 'image-edit' && 'Transform images with natural language prompts using Nano Banana.'}
+                {mode === 'generate-image' && 'Generate stunning visuals from pure imagination.'}
                 {mode === 'video-gen' && 'Generate cinematic videos from text or animate your photos with Veo.'}
                 {mode === 'analyze' && 'Analyze images and extract insights using Gemini 3.1 Pro.'}
+                {mode === 'research' && 'Real-time research with Google Search grounding.'}
+                {mode === 'summarize' && 'Summarize any URL or document instantly.'}
                 {mode === 'speech' && 'Convert text to high-quality speech using Gemini 2.5 Flash.'}
                 {mode === 'transcribe' && 'Record audio and transcribe it instantly using Gemini 3 Flash.'}
               </p>
@@ -351,14 +406,24 @@ export default function App() {
                   </div>
                 )}
               </div>
-            ) : mode === 'speech' ? (
+            ) : mode === 'speech' || mode === 'generate-image' || mode === 'research' || mode === 'summarize' ? (
               <div className="relative aspect-video rounded-3xl border-2 border-dashed border-white/10 flex flex-col items-center justify-center gap-6 bg-white/[0.02] group">
                 <div className="w-20 h-20 rounded-2xl bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
-                  <Volume2 className="w-10 h-10 text-white/40 group-hover:text-orange-500 transition-colors" />
+                  {mode === 'speech' && <Volume2 className="w-10 h-10 text-white/40 group-hover:text-orange-500 transition-colors" />}
+                  {mode === 'generate-image' && <Wand2 className="w-10 h-10 text-white/40 group-hover:text-orange-500 transition-colors" />}
+                  {mode === 'research' && <Globe className="w-10 h-10 text-white/40 group-hover:text-orange-500 transition-colors" />}
+                  {mode === 'summarize' && <BookOpen className="w-10 h-10 text-white/40 group-hover:text-orange-500 transition-colors" />}
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-medium">Text-to-Speech Engine</p>
-                  <p className="text-sm text-white/40">Enter text below to generate audio</p>
+                  <p className="text-lg font-medium">
+                    {mode === 'speech' && 'Text-to-Speech Engine'}
+                    {mode === 'generate-image' && 'Image Generation Engine'}
+                    {mode === 'research' && 'Research & Search Engine'}
+                    {mode === 'summarize' && 'URL Summarization Engine'}
+                  </p>
+                  <p className="text-sm text-white/40">
+                    {mode === 'summarize' ? 'Enter a URL below to distill its content' : 'Enter a prompt below to begin'}
+                  </p>
                 </div>
               </div>
             ) : (
@@ -424,6 +489,9 @@ export default function App() {
                     mode === 'video-gen' ? "Describe the scene... (e.g., 'A cinematic drone shot of a neon city')" :
                     mode === 'analyze' ? "What do you want to know about this image?" :
                     mode === 'speech' ? "Enter text to convert to speech..." :
+                    mode === 'generate-image' ? "Describe the image you want to create..." :
+                    mode === 'research' ? "What would you like to research? (e.g., 'Latest trends in AI')" :
+                    mode === 'summarize' ? "Enter a URL to summarize (e.g., https://example.com)" :
                     "Optional context for transcription..."
                   }
                   className="w-full bg-white/5 border border-white/10 rounded-2xl p-6 pt-8 text-lg focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all min-h-[120px] resize-none placeholder:text-white/20"
@@ -491,6 +559,9 @@ export default function App() {
                         mode === 'video-gen' ? 'Generate Cinematic' :
                         mode === 'analyze' ? 'Analyze Image' :
                         mode === 'speech' ? 'Generate Speech' :
+                        mode === 'generate-image' ? 'Create Image' :
+                        mode === 'research' ? 'Start Research' :
+                        mode === 'summarize' ? 'Summarize URL' :
                         'Transcribe Audio'
                       }</span>
                     </>
@@ -517,9 +588,17 @@ export default function App() {
               <h3 className="text-sm font-bold uppercase tracking-widest text-white/40 flex items-center gap-2">
                 <History className="w-4 h-4" /> Recent Creations
               </h3>
-              <span className="text-[10px] bg-white/5 px-2 py-1 rounded-md border border-white/10 text-white/40">
-                {results.length} items
-              </span>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={clearHistory}
+                  className="text-[10px] text-white/20 hover:text-red-400 transition-colors flex items-center gap-1"
+                >
+                  <Trash2 className="w-3 h-3" /> Clear
+                </button>
+                <span className="text-[10px] bg-white/5 px-2 py-1 rounded-md border border-white/10 text-white/40">
+                  {results.length} items
+                </span>
+              </div>
             </div>
 
             <div className="space-y-4 max-h-[calc(100vh-250px)] overflow-y-auto pr-2 custom-scrollbar">
@@ -569,11 +648,18 @@ export default function App() {
                             <Play className="w-2 h-2 fill-current" /> Video
                           </div>
                         </div>
-                      ) : (
+                      ) : result.type === 'audio' || result.type === 'transcription' ? (
                         <div className="relative aspect-video bg-white/5 flex items-center justify-center">
                           <audio src={result.url} controls className="w-[80%]" />
                           <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-black/60 backdrop-blur-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
                             <Volume2 className="w-2 h-2" /> Audio
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative aspect-video bg-white/5 flex items-center justify-center">
+                          <div className="flex flex-col items-center gap-2 opacity-20">
+                            {result.type === 'research' ? <Globe className="w-12 h-12" /> : <FileText className="w-12 h-12" />}
+                            <span className="text-[10px] uppercase tracking-widest font-bold">Document</span>
                           </div>
                         </div>
                       )}
@@ -583,8 +669,36 @@ export default function App() {
                           {result.prompt}
                         </p>
                         {result.text && (
-                          <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-white/50 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar">
-                            {result.text}
+                          <div className="relative group/text">
+                            <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-white/50 leading-relaxed max-h-32 overflow-y-auto custom-scrollbar">
+                              {result.text}
+                            </div>
+                            <button 
+                              onClick={() => copyToClipboard(result.text!)}
+                              className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 opacity-0 group-hover/text:opacity-100 hover:bg-white/10 transition-all"
+                              title="Copy Text"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                        {result.sources && result.sources.length > 0 && (
+                          <div className="space-y-1 pt-2">
+                            <p className="text-[9px] uppercase tracking-widest font-bold text-white/20">Sources</p>
+                            <div className="flex flex-wrap gap-1">
+                              {result.sources.map((source, sIdx) => (
+                                <a 
+                                  key={sIdx} 
+                                  href={source.uri} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] text-orange-500/60 hover:text-orange-500 flex items-center gap-1 bg-orange-500/5 px-2 py-0.5 rounded-md border border-orange-500/10 transition-all"
+                                >
+                                  <LinkIcon className="w-2.5 h-2.5" />
+                                  {source.title.length > 15 ? source.title.substring(0, 15) + '...' : source.title}
+                                </a>
+                              ))}
+                            </div>
                           </div>
                         )}
                         <div className="flex items-center justify-between pt-2 border-t border-white/5">
@@ -594,10 +708,14 @@ export default function App() {
                             {result.type === 'analysis' && <Search className="w-3 h-3" />}
                             {result.type === 'audio' && <Volume2 className="w-3 h-3" />}
                             {result.type === 'transcription' && <Mic className="w-3 h-3" />}
+                            {result.type === 'research' && <Globe className="w-3 h-3" />}
+                            {result.type === 'summary' && <BookOpen className="w-3 h-3" />}
                             {result.type === 'image' ? 'Nano Banana' : 
                              result.type === 'video' ? 'Veo Engine' :
                              result.type === 'analysis' ? 'Gemini 3.1 Pro' :
                              result.type === 'audio' ? 'Gemini 2.5 Flash' :
+                             result.type === 'research' ? 'Search Grounding' :
+                             result.type === 'summary' ? 'URL Context' :
                              'Gemini 3 Flash'}
                           </span>
                           <a 
