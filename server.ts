@@ -11,17 +11,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database("history.db");
 
 // Initialize database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL,
-    data TEXT NOT NULL,
-    prompt TEXT NOT NULL,
-    text TEXT,
-    sources TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      text TEXT,
+      sources TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // Ensure sources column exists if table was created before
+  const tableInfo = db.prepare("PRAGMA table_info(history)").all() as any[];
+  const hasSources = tableInfo.some(col => col.name === 'sources');
+  if (!hasSources) {
+    db.exec("ALTER TABLE history ADD COLUMN sources TEXT");
+  }
+} catch (e) {
+  console.error("Database initialization error:", e);
+}
 
 async function startServer() {
   const app = express();
@@ -41,7 +51,8 @@ async function startServer() {
 
   app.post("/api/history", (req, res) => {
     const { type, data, prompt, text, sources } = req.body;
-    if (!type || !data || !prompt) {
+    // data can be empty for research/summary
+    if (!type || !prompt) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -50,6 +61,7 @@ async function startServer() {
       const info = db.prepare("INSERT INTO history (type, data, prompt, text, sources) VALUES (?, ?, ?, ?, ?)").run(type, data, prompt, text, sourcesStr);
       res.json({ id: info.lastInsertRowid, type, data, prompt, text, sources });
     } catch (error) {
+      console.error("Failed to save history:", error);
       res.status(500).json({ error: "Failed to save history" });
     }
   });

@@ -31,7 +31,11 @@ import {
   BookOpen,
   FileSearch,
   Copy,
-  Check
+  Check,
+  Settings,
+  Info,
+  X,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -47,6 +51,7 @@ import {
   generateImage,
   researchWithSearch,
   summarizeUrl,
+  upscaleImage,
   GenerationResult 
 } from './services/geminiService';
 
@@ -67,6 +72,9 @@ export default function App() {
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
   const [isRecording, setIsRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState<{ data: string; mimeType: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [userApiKey, setUserApiKey] = useState(localStorage.getItem('lumina_api_key') || '');
+  const [showTooltip, setShowTooltip] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -169,6 +177,57 @@ export default function App() {
     // Could add a toast here
   };
 
+  const handleUpscale = async (result: GenerationResult) => {
+    if (result.type !== 'image' && result.type !== 'analysis') return;
+    
+    setIsGenerating(true);
+    setError(null);
+    
+    try {
+      // Extract base64 from data URL
+      const base64 = result.url.split(',')[1];
+      const mimeType = result.url.split(';')[0].split(':')[1];
+      
+      const upscaledUrl = await upscaleImage(base64, mimeType);
+      
+      if (upscaledUrl) {
+        const response = await fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'image',
+            data: upscaledUrl,
+            prompt: `Upscaled: ${result.prompt}`,
+            text: "Image upscaled and enhanced for better clarity."
+          })
+        });
+
+        if (response.ok) {
+          const savedItem = await response.json();
+          const newResult: GenerationResult = {
+            id: savedItem.id,
+            type: savedItem.type,
+            url: savedItem.data,
+            prompt: savedItem.prompt,
+            text: savedItem.text
+          };
+          setResults([newResult, ...results]);
+        }
+      }
+    } catch (err) {
+      console.error("Upscale failed:", err);
+      setError("Upscaling failed. Please try again.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const saveApiKey = (key: string) => {
+    setUserApiKey(key);
+    localStorage.setItem('lumina_api_key', key);
+    setShowSettings(false);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -211,6 +270,10 @@ export default function App() {
       let resultSources: any[] | undefined = undefined;
       let resultType: GenerationResult['type'] = 'image';
 
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error("Gemini API Key is missing. Please configure it in the Secrets panel.");
+      }
+
       if (mode === 'image-edit' && uploadedImage) {
         resultUrl = await editImage(uploadedImage.data, uploadedImage.mimeType, prompt || "Enhance this image");
         resultType = 'image';
@@ -241,6 +304,10 @@ export default function App() {
         resultText = await summarizeUrl(prompt);
         resultType = 'summary';
         resultUrl = ''; // No primary asset for summary
+      }
+
+      if (resultUrl === null && !resultText) {
+        throw new Error("The AI model returned no content. Please try a different prompt or check your connection.");
       }
 
       if (resultUrl !== null || resultText) {
@@ -295,52 +362,97 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0502] text-white font-sans selection:bg-orange-500/30">
+    <div className="min-h-screen bg-[#0a0502] text-white font-sans selection:bg-orange-500/30 flex">
       {/* Atmospheric Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-orange-900/10 blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-blue-900/10 blur-[120px]" />
       </div>
 
-      <div className="relative z-10 max-w-7xl mx-auto px-6 py-12">
-        {/* Header */}
-        <header className="flex justify-between items-center mb-16">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg shadow-orange-500/20">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight">Lumina Studio</h1>
+      {/* Vertical Sidebar Navigation */}
+      <aside className="relative z-20 w-20 lg:w-64 h-screen sticky top-0 bg-black/40 backdrop-blur-3xl border-r border-white/10 flex flex-col py-8 px-4 gap-8">
+        <div className="flex items-center gap-3 px-2">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0">
+            <Sparkles className="w-6 h-6 text-white" />
           </div>
-          
-          <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/10 backdrop-blur-md overflow-x-auto max-w-full no-scrollbar">
-            {[
-              { id: 'image-edit', label: 'Edit', icon: ImageIcon },
-              { id: 'generate-image', label: 'Create', icon: Wand2 },
-              { id: 'video-gen', label: 'Video', icon: Video },
-              { id: 'analyze', label: 'Analyze', icon: Search },
-              { id: 'research', label: 'Research', icon: Globe },
-              { id: 'summarize', label: 'Summary', icon: BookOpen },
-              { id: 'speech', label: 'Speech', icon: Volume2 },
-              { id: 'transcribe', label: 'Transcribe', icon: Mic },
-            ].map((tab) => (
-              <button 
-                key={tab.id}
-                onClick={() => setMode(tab.id as Mode)}
-                className={cn(
-                  "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 flex items-center gap-2 whitespace-nowrap",
-                  mode === tab.id ? "bg-white text-black shadow-xl" : "text-white/60 hover:text-white"
-                )}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </header>
+          <h1 className="text-xl font-bold tracking-tight hidden lg:block">Lumina</h1>
+        </div>
 
-        <main className="grid lg:grid-cols-[1fr,400px] gap-12">
-          {/* Main Interface */}
-          <section className="space-y-8">
+        <nav className="flex flex-col gap-2 flex-1 overflow-y-auto no-scrollbar">
+          {[
+            { id: 'image-edit', label: 'Edit Image', icon: ImageIcon, desc: 'Refine visuals' },
+            { id: 'generate-image', label: 'Create Image', icon: Wand2, desc: 'AI generation' },
+            { id: 'video-gen', label: 'Video Gen', icon: Video, desc: 'Cinematic Veo' },
+            { id: 'analyze', label: 'Analyze', icon: Search, desc: 'Deep insights' },
+            { id: 'research', label: 'Research', icon: Globe, desc: 'Web grounding' },
+            { id: 'summarize', label: 'Summarize', icon: BookOpen, desc: 'URL context' },
+            { id: 'speech', label: 'Speech', icon: Volume2, desc: 'TTS Engine' },
+            { id: 'transcribe', label: 'Transcribe', icon: Mic, desc: 'Audio to text' },
+          ].map((tab) => (
+            <button 
+              key={tab.id}
+              onClick={() => setMode(tab.id as Mode)}
+              className={cn(
+                "w-full p-3 rounded-2xl transition-all duration-300 flex items-center gap-4 group relative",
+                mode === tab.id 
+                  ? "bg-white text-black shadow-xl" 
+                  : "text-white/40 hover:text-white hover:bg-white/5"
+              )}
+            >
+              <tab.icon className={cn("w-6 h-6 shrink-0", mode === tab.id ? "text-black" : "group-hover:text-orange-500 transition-colors")} />
+              <div className="hidden lg:flex flex-col items-start text-left">
+                <span className="text-sm font-bold">{tab.label}</span>
+                <span className={cn("text-[10px] font-medium opacity-60", mode === tab.id ? "text-black/60" : "text-white/40")}>{tab.desc}</span>
+              </div>
+              {mode === tab.id && (
+                <motion.div 
+                  layoutId="active-pill"
+                  className="absolute left-0 w-1 h-6 bg-orange-500 rounded-r-full"
+                />
+              )}
+            </button>
+          ))}
+        </nav>
+
+        <div className="pt-8 border-t border-white/5 flex flex-col gap-4">
+          <button 
+            onClick={() => setShowSettings(true)}
+            className="w-full p-3 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all flex items-center gap-4 group"
+          >
+            <Settings className="w-6 h-6 text-white/40 group-hover:text-white transition-colors" />
+            <span className="text-sm font-medium hidden lg:block">Settings</span>
+          </button>
+          
+          <div className="hidden lg:block">
+            {(!process.env.GEMINI_API_KEY && !userApiKey) ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-bold uppercase tracking-wider">
+                <AlertCircle className="w-3 h-3" /> Key Missing
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase tracking-wider">
+                <Check className="w-3 h-3" /> API Ready
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 relative z-10 h-screen overflow-y-auto custom-scrollbar">
+        <div className="max-w-7xl mx-auto px-6 lg:px-12 py-12">
+          {/* Header (Simplified) */}
+          <header className="flex justify-between items-center mb-16 lg:hidden">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center">
+                <Sparkles className="w-6 h-6 text-white" />
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight">Lumina</h1>
+            </div>
+          </header>
+
+          <main className="grid xl:grid-cols-[1fr,400px] gap-12">
+            {/* Main Interface */}
+            <section className="space-y-8">
             <div className="space-y-2">
               <motion.h2 
                 key={mode}
@@ -527,12 +639,35 @@ export default function App() {
                   )}
                   
                   {mode === 'video-gen' && !hasKey && (
-                    <button 
-                      onClick={openVeoKeyDialog}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500/10 text-orange-500 text-xs font-bold border border-orange-500/20 hover:bg-orange-500/20 transition-all"
-                    >
-                      <AlertCircle className="w-4 h-4" /> Setup API Key
-                    </button>
+                    <div className="relative flex items-center gap-2">
+                      <button 
+                        onClick={openVeoKeyDialog}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-500/10 text-orange-500 text-xs font-bold border border-orange-500/20 hover:bg-orange-500/20 transition-all"
+                      >
+                        <AlertCircle className="w-4 h-4" /> Setup API Key
+                      </button>
+                      <div className="relative group">
+                        <Info 
+                          className="w-4 h-4 text-white/20 cursor-help hover:text-white/40 transition-colors"
+                          onMouseEnter={() => setShowTooltip(true)}
+                          onMouseLeave={() => setShowTooltip(false)}
+                        />
+                        <AnimatePresence>
+                          {showTooltip && (
+                            <motion.div 
+                              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 rounded-xl bg-black/90 backdrop-blur-xl border border-white/10 text-[10px] leading-relaxed text-white/60 z-50 shadow-2xl"
+                            >
+                              <p className="font-bold text-white mb-1">Why do I need this?</p>
+                              Veo video generation requires a paid Google Cloud project API key. This ensures high-quality, cinematic output and dedicated processing power for your creations.
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-black/90" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -590,6 +725,13 @@ export default function App() {
               </h3>
               <div className="flex items-center gap-2">
                 <button 
+                  onClick={fetchHistory}
+                  className="text-[10px] text-white/20 hover:text-white transition-colors flex items-center gap-1"
+                  title="Reload History"
+                >
+                  <History className="w-3 h-3" /> Reload
+                </button>
+                <button 
                   onClick={clearHistory}
                   className="text-[10px] text-white/20 hover:text-red-400 transition-colors flex items-center gap-1"
                 >
@@ -638,6 +780,15 @@ export default function App() {
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                        {(result.type === 'image' || result.type === 'analysis') && (
+                          <button 
+                            onClick={() => handleUpscale(result)}
+                            title="Upscale & Enhance"
+                            className="p-1.5 rounded-lg bg-black/60 hover:bg-emerald-500/80 backdrop-blur-md transition-colors"
+                          >
+                            <Zap className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                       {result.type === 'image' || result.type === 'analysis' ? (
                         <img src={result.url} alt={result.prompt} className="w-full aspect-video object-cover" />
@@ -751,6 +902,81 @@ export default function App() {
         </div>
       </footer>
 
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-md bg-[#151619] border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-500 to-blue-500" />
+              
+              <button 
+                onClick={() => setShowSettings(false)}
+                className="absolute top-6 right-6 p-2 rounded-full hover:bg-white/5 transition-colors"
+              >
+                <X className="w-5 h-5 text-white/40" />
+              </button>
+
+              <div className="space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center">
+                    <Key className="w-5 h-5 text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold">API Configuration</h3>
+                    <p className="text-xs text-white/40">Manage your creative credentials</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest font-bold text-white/30">Gemini API Key</label>
+                    <div className="relative">
+                      <input 
+                        type="password"
+                        value={userApiKey}
+                        onChange={(e) => setUserApiKey(e.target.value)}
+                        placeholder="Paste your API key here..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                      />
+                    </div>
+                    <p className="text-[10px] text-white/20 leading-relaxed">
+                      Your key is stored locally in your browser and used for all AI features. Get one at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">Google AI Studio</a>.
+                    </p>
+                  </div>
+
+                  <button 
+                    onClick={() => saveApiKey(userApiKey)}
+                    className="w-full py-3 rounded-xl bg-white text-black font-bold text-sm hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  >
+                    Save Configuration
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      localStorage.removeItem('lumina_api_key');
+                      setUserApiKey('');
+                      setShowSettings(false);
+                    }}
+                    className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-white/60 font-medium text-sm hover:bg-white/10 transition-all"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <style dangerouslySetInnerHTML={{ __html: `
         .custom-scrollbar::-webkit-scrollbar {
           width: 4px;
@@ -766,6 +992,7 @@ export default function App() {
           background: rgba(255, 255, 255, 0.2);
         }
       `}} />
+      </div>
     </div>
   );
 }

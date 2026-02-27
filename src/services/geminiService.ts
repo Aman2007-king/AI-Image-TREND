@@ -20,8 +20,14 @@ export const openVeoKeyDialog = async (): Promise<void> => {
   }
 };
 
+const getApiKey = (): string => {
+  const savedKey = localStorage.getItem('lumina_api_key');
+  if (savedKey) return savedKey;
+  return process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+};
+
 export const generateImage = async (prompt: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
@@ -44,7 +50,7 @@ export const generateImage = async (prompt: string): Promise<string | null> => {
 };
 
 export const researchWithSearch = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3.1-pro-preview",
@@ -70,7 +76,7 @@ export const researchWithSearch = async (prompt: string): Promise<{ text: string
 };
 
 export const summarizeUrl = async (url: string, prompt?: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3.1-pro-preview",
@@ -87,7 +93,7 @@ export const summarizeUrl = async (url: string, prompt?: string): Promise<string
 };
 
 export const analyzeImage = async (base64Image: string, mimeType: string, prompt: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-pro-preview',
@@ -106,7 +112,7 @@ export const analyzeImage = async (base64Image: string, mimeType: string, prompt
 };
 
 export const generateSpeech = async (text: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -133,7 +139,7 @@ export const generateSpeech = async (text: string): Promise<string | null> => {
 };
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -152,7 +158,7 @@ export const transcribeAudio = async (base64Audio: string, mimeType: string): Pr
 };
 
 export const editImage = async (base64Image: string, mimeType: string, prompt: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   
   try {
     const response = await ai.models.generateContent({
@@ -184,13 +190,41 @@ export const editImage = async (base64Image: string, mimeType: string, prompt: s
   }
 };
 
+export const upscaleImage = async (base64Image: string, mimeType: string): Promise<string | null> => {
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { inlineData: { data: base64Image, mimeType } },
+          { text: "Upscale and enhance this image. Increase resolution, sharpen details, and improve overall clarity while maintaining the original composition." }
+        ]
+      },
+      config: {
+        imageConfig: { aspectRatio: "1:1" }
+      }
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error("Error upscaling image:", error);
+    throw error;
+  }
+};
+
 export const generateVideo = async (
   prompt: string, 
   aspectRatio: '16:9' | '9:16' = '16:9',
   image?: { data: string; mimeType: string }
 ): Promise<string | null> => {
   // Always create a new instance to get the latest API key
-  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  const apiKey = getApiKey();
   const ai = new GoogleGenAI({ apiKey: apiKey });
 
   try {
